@@ -16,19 +16,26 @@ permissions:
   id-token: write
 
 jobs:
-  scaffold-only:
-    if: ${{ hashFiles('python-packages/**/pyproject.toml') == '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "No Python package exists yet. release-please remains scaffold-only."
-
   release:
-    if: ${{ hashFiles('python-packages/**/pyproject.toml') != '' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - id: detect
+        name: Detect Python packages
+        run: |
+          if find python-packages -mindepth 2 -maxdepth 2 -name pyproject.toml -print -quit 2>/dev/null | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Keep scaffold-only until a Python package exists
+        if: ${{ steps.detect.outputs.exists != 'true' }}
+        run: echo "No Python package exists yet. release-please remains scaffold-only."
 
       - id: release
+        if: ${{ steps.detect.outputs.exists == 'true' }}
         uses: googleapis/release-please-action@v4
         with:
           config-file: .github/release-please/python-config.json

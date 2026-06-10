@@ -36,6 +36,8 @@ metadata:
 
 - Python 3.10+
 - `python3 -m pip install korail2-ncard pycryptodome`
+  - 반드시 **`korail2-ncard`** (fork)를 설치한다. 원본 `korail2`는 Dynapath MACRO ERROR 발생.
+  - 주의: `korail2-ncard` 설치는 `korail2` 패키지를 덮어쓰므로, `import korail2`로 그대로 사용한다.
 
 ## Required environment variables
 
@@ -169,11 +171,75 @@ python3 scripts/ktx_booking.py cancel <reservation_id>
 - 예약이면 예약 결과와 제한 시간이 확인되어 있다
 - 취소면 어떤 예약을 취소했는지 남아 있다
 
+## ⚠️ Known pitfalls
+
+### 1. `scripts/ktx_booking.py` helper script may not exist locally
+
+k-skill 번들이 미설치 상태면 `scripts/ktx_booking.py` helper가 존재하지 않는다. 실행 전에 반드시 확인한다:
+
+```bash
+python3 scripts/ktx_booking.py --help 2>/dev/null || echo "HELPER_MISSING"
+```
+
+helper가 없으면 **직접 `korail2` API로 대체**한다. 아래 참조.
+
+### 2. Dynapath MACRO ERROR
+
+`korail2` 원본 패키지(0.4.0)는 Korail 안티봇 체크(Dynapath)에서 `MACRO ERROR` 발생. **반드시 `korail2-ncard` fork를 설치**해야 한다:
+
+```bash
+python3 -m pip install korail2-ncard pycryptodome
+```
+
+설치 후에도 import는 `from korail2 import Korail, AdultPassenger`로 동일하게 사용한다.
+
+### 3. Train 객체 속성명 차이
+
+`korail2-ncard` fork의 Train 객체는 원본 `korail2`와 속성명이 다르다:
+
+| 속성 | 타입 | 의미 |
+|------|------|------|
+| `general_seat` | `str` (→int) | 일반실 잔여석. `int(v) > 0`이면 예약 가능 |
+| `special_seat` | `str` (→int) | 특실 잔여석 |
+| `wait_reserve_flag` | `str` | `"1"`=예약대기 가능, `"-2"`=불가 |
+| `reserve_possible` | `str` | `"Y"`=예약 가능 |
+| `train_no` | `str` | 열차 번호 (ex: `"075"`) |
+| `train_type_name` | `str` | `"KTX"`, `"KTX-산천"` 등 |
+| `dep_time` / `arr_time` | `str` | `"065700"` 형식 |**
+
+주의: `general_seat_available`, `special_seat_available`, `waiting_available` 같은 bool 속성은 존재하지 않는다. `general_seat`의 int값으로 판단한다.
+
+### 4. `Station` 클래스 없음
+
+`from korail2 import Station` 은 존재하지 않는다. 역명은 **일반 문자열**로 전달한다.
+
+```python
+# ⚠️ 안 됨
+from korail2 import Station
+dep = Station.search('오송')
+
+# ✅ 됨
+trains = k.search_train_allday('오송', '부산', date='20260614', ...)
+```
+
+### 5. `search_train_allday` 사용
+
+`search_train`보다 **`search_train_allday`**가 하루 전체 열차를 반환하므로 권장.
+
+```python
+trains = k.search_train_allday('오송', '부산', date='20260614', time='000000',
+                                passengers=[AdultPassenger(1)])
+```
+
+### 6. credentials 환경변수 주입
+
+`~/.config/k-skill/secrets.env` 파일은 Python에서 직접 읽어 `os.environ`에 주입해야 한다. 셸에서 `export` 없이 python3를 실행하면 환경변수가 비어 있다.
+
 ## Failure modes
 
 - 로그인 실패
 - 매진
-- Korail anti-bot 규칙 변경
+- Korail anti-bot 규칙 변경 (Dynapath 업데이트 시)`
 
 ## Notes
 

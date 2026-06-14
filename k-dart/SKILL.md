@@ -388,6 +388,10 @@ curl -fsS --get 'https://opendart.fss.or.kr/api/cvbdIsDecsn.json' \
 - 숫자는 읽기 쉬운 단위(억, 조, 주)로 풀어주되 원본 수치도 유지한다.
 - 답변 말미에 "금감원 DART 공시 데이터 기준 / 투자 조언 아님" 을 짧게 남긴다.
 
+## Shareholder research workflow
+
+지분구조(주요주주/대량보유) 조회 흐름과 `alotMatter.json`/`tesstkAcqsDspsSttus.json` 응답 필드명 레퍼런스는 `references/shareholder-research.md` 참고.
+
 ## Keep the answer compact
 
 - 공시검색: 공시명 / 접수일 / 제출인 위주로 최근 5~10건
@@ -395,12 +399,59 @@ curl -fsS --get 'https://opendart.fss.or.kr/api/cvbdIsDecsn.json' \
 - 재무제표: 매출액 / 영업이익 / 당기순이익 / 자산총계 / 부채총계 / 자본총계 핵심 항목
 - 주요사항보고서: 핵심 결정 내용과 일자를 요약
 
+## Fallback when API_K_DART is not set
+
+When the user asks for shareholder structure (지분구조/주요주주), financial data, or DART-accessible info but `API_K_DART` is unset, do NOT just report failure. Fall back in this order:
+
+1. **Check FnGuide via browser** — FnGuide (comp.fnguide.com) has structured tables for major shareholder data. Navigate to `https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode=A{종목코드}` and look for the "주주구분" or "지분구조" section. This requires the browser tool.
+
+2. **ddgs news search** — If browser is too slow, use DuckDuckGo news search to find recent news articles about major shareholder changes:
+```bash
+cat > /tmp/ddgs_lookup.py << 'PYEOF'
+from ddgs import DDGS
+with DDGS(verify=False) as ddgs:
+    results = list(ddgs.text("{종목명} 주요주주 지분율", max_results=5))
+    for r in results:
+        print(f"Title: {r.get('title','')}")
+        print(f"Body: {r.get('body','')[:300]}")
+        print()
+PYEOF
+python3 /tmp/ddgs_lookup.py
+```
+
+3. **k-skill-proxy search + Naver Finance** — For basic shareholder data (최대주주, 외국인 지분율), the k-skill-proxy does NOT offer shareholder info. Combine with Naver Finance browser lookup as last resort.
+
+4. **Offer to set up the key** — Tell the user: "DART API 키를 설정하시면 1~2초 내에 정확한 지분구조 데이터를 조회할 수 있습니다. https://opendart.fss.or.kr 에서 발급 후 ~/.hermes/.env에 API_K_DART=키 를 추가해주세요."
+
+### Performance note
+Browser scraping FnGuide for shareholder data can take 30–60 seconds. The **fastest reliable path** is always `API_K_DART` + DART OpenAPI. If this data is frequently requested, setting up the key is the single highest-ROI improvement.
+
 ## Failure modes
 
-- `API_K_DART` 환경변수 미설정 → 키 발급 안내 후 중단
+- `API_K_DART` 환경변수 미설정 → 키 발급 안내 후 중단 (or use fallback above)
 - `status` ≠ `"000"` → 상태코드표 참고해 에러 안내
 - `corp_code`를 찾을 수 없음 → 회사명 재확인 요청
 - 해당 기간/보고서에 데이터 없음 → 기간 또는 `reprt_code` 변경 안내
+
+## Pitfalls
+
+### corpCode.xml 다운로드 타임아웃
+
+corpCode.zip은 약 30MB로, 다운로드에 30초 이상 걸릴 수 있다. 터미널 기본 타임아웃(15s) 내에 완료되지 않으면 BLOCKED 처리된다.
+- **해결**: `--max-time 60` 플래그 추가 또는 `background=true` + `notify_on_complete=true`로 백그라운드 다운로드
+- `unzip`까지 완료한 후 grep으로 검색해야 함 (unzip 별도 분리)
+
+### grep 검색 시 stock_code 부분 매칭 주의
+
+`grep '247540' CORPCODE.xml`은 stock_code=247540인 에코프로비엠 뿐 아니라 corp_code=00247540인 대한토지신탁(다른 회사, stock_code 없음)도 같이 매칭된다.
+- **해결**: 정확한 검색을 위해 `grep -B5 '에코프로비엠' CORPCODE.xml | head -10`으로 회사명 기준 먼저 찾고 corp_code를 확인하라. 종목코드로 검색할 때는 `<stock_code>247540</stock_code>`처럼 태그까지 포함하거나, `grep -A5 'stock_code>247540'` 패턴을 사용하라.
+
+### DART 문서 원문은 JS 렌더링
+
+DART OpenAPI는 공시 목록 메타데이터만 제공한다. 실제 보고서 본문(사업보고서의 주주현황 표 등)은 `browser_navigate`로도 추출이 어렵다 — DART 뷰어가 JavaScript 동적 렌더링을 사용하기 때문.
+- `curl`로 DART HTML 페이지(`dsaf001/main.do?rcpNo=...`)를 요청하면 CSS/오류페이지만 반환된다
+- **대안**: `tesstkAcqsDspsSttus.json`(자기주식), `alotMatter.json`(배당) 등 OpenAPI 내 endpoint로 간접 확인
+- 사업보고서 내 주요주주 주식소유현황 표는 DART API로 직접 추출 불가 → FnGuide 브라우저 조회 또는 ddgs 검색으로 대체
 
 ## Done when
 

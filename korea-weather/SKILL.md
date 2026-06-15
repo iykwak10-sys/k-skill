@@ -95,9 +95,56 @@ curl -fsS --get "${BASE}/v1/korea-weather/forecast" \
 - `nx` / `ny` 또는 `lat` / `lon` 이 불완전한 경우
 - 기상청 quota 초과 또는 upstream 장애
 - 선택한 발표 시각에 아직 예보가 준비되지 않은 경우
+- **Proxy 429 (Rate Limited)**: k-skill-proxy가 429 Too Many Requests를 반환하면 일시적 과부하 상태. 아래 **Fallback Workflow**로 즉시 전환한다. 재시도(지수 백오프) 후에도 실패하면 Naver Weather로 직접 조회한다.
+
+## Fallback Workflow (Proxy 실패 시)
+
+proxy가 429 또는 기타 오류로 실패하면, browser로 Naver Weather Search에 접속한다.
+
+### 1. Naver Weather Search 열기
+
+```bash
+https://search.naver.com/search.naver?query={도시명}+날씨
+```
+
+예시:
+- `세종시 날씨` → `https://search.naver.com/search.naver?query=세종시+날씨`
+- `부산 날씨` → `https://search.naver.com/search.naver?query=부산+날씨`
+
+### 2. Browser로 데이터 수집
+
+browser_navigate → browser_snapshot 순서로 접근한다.
+
+Naver 페이지에서 확인 가능한 정보:
+- **현재 날씨**: 기온, 체감온도, 습도, 풍향/풍속
+- **시간별 예보**: 1시간 간격 날씨/기온 (오늘 ~ 글피)
+- **일별 요약 (주간전망 탭)**: 
+  - `tab "전망"` 클릭 → `tab "주간전망"` 에서 10일치 오전/오후 날씨 + 강수확률 + 최저/최고기온
+  - 네이버 주간예보는 `오늘: 6.04. 오전 10% 맑음 오후 60% 구름많고 가끔 소나기 최저기온 19° 최고기온 29°` 형식
+- **미세먼지/초미세먼지**: 좋음/보통/나쁨
+- **자외선 지수**: 낮음/보통/높음/매우높음
+
+탭 전환 시 browser_click(ref) → browser_snapshot 순서로 데이터를 읽는다.
+
+| tab | 클릭할 ref |
+|-----|-----------|
+| 오늘 | `오늘` 링크 ref (selected 시 오늘의 현재+시간별) |
+| 내일 | `내일` 링크 ref (오전/오후 요약 + 시간별) |
+| 모레 | `모레` 링크 ref (오전/오후 요약 + 시간별) |
+| 전망 | `전망` 링크 ref → 다시 `주간전망` 탭 ref (10일 outlook) |
+
+### 3. 요약 시 출력할 항목 (우선순위)
+
+- 날짜/요일
+- 오전 날씨 + 강수확률
+- 오후 날씨 + 강수확률
+- 최저기온 / 최고기온
+- 미세먼지 (있으면)
+- 특이사항 (소나기, 돌풍, 일교차 등)
 
 ## Notes
 
 - 공식 API는 `nx` / `ny` 격자를 쓰지만, proxy 는 `lat` / `lon` 도 받아 내부에서 격자로 변환한다.
 - 단기예보 category 는 `TMP`, `SKY`, `PTY`, `POP`, `PCP`, `SNO`, `REH`, `WSD` 등을 중심으로 본다.
 - proxy 운영/환경변수 설정은 `docs/features/k-skill-proxy.md` 를 참고한다.
+- Naver Weather 검색으로도 기상청 원천 데이터를 동일하게 조회 가능하다. 기상청 단기예보는 KST 기준 06:00, 12:00, 18:00, 24:00 발표.
